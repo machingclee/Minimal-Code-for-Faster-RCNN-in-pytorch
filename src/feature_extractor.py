@@ -7,12 +7,12 @@ from torchsummary import summary
 from torch import Tensor
 from typing import Dict, List, Tuple, Optional, Any
 from src import config
-
+from src.device import device
 
 class FeatureExtractor(nn.Module):
     def __init__(self):
         super(FeatureExtractor, self).__init__()
-        self.vgg = models.vgg16(pretrained=True)
+        self.vgg = models.vgg16(pretrained=True).to(device)
         self.freezed_weight()
         self.features = self.vgg.features
         self.out_channels = None
@@ -23,7 +23,7 @@ class FeatureExtractor(nn.Module):
             param.requires_grad = False
 
     def _get_layers(self):
-        dummy_img = torch.randn((1, 3, config.input_height, config.input_width))
+        dummy_img = torch.randn((1, 3, config.input_height, config.input_width)).to(device)
         x = dummy_img
         # type: (Tensor) -> Any
         desired_layers = []

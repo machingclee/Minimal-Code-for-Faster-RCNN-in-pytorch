@@ -15,7 +15,7 @@ class AnchorGenerator():
 
     def get_anchors(self):
         if AnchorGenerator.anchors is not None:
-            return AnchorGenerator.anchors
+            return AnchorGenerator.anchors.to(device)
 
         ratios = torch.as_tensor(config.anchor_ratios)
         scales = torch.as_tensor(config.anchor_scales)

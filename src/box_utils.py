@@ -19,18 +19,21 @@ def assign_targets_to_anchors_or_proposals(
     neg_iou_thresh,
     target_cls_indexes=None
 ):
+    target_boxes = target_boxes.to(device)
+    anchors = anchors.to(device)
     """
     return:
         labels: [len(anchors), ], -1 = neg, 0 = ignore, 1 = pos
         target: [len(anchors), 4]
     """
-    labels = torch.zeros(len(anchors), dtype=torch.int32)
+    anchors = anchors.to(device)
+    labels = torch.zeros(len(anchors), dtype=torch.int32).to(device)
     distributed_cls_indexes = None
 
     if target_cls_indexes is not None:
-        distributed_cls_indexes = torch.zeros(len(anchors), dtype=torch.float32)
+        distributed_cls_indexes = torch.zeros(len(anchors), dtype=torch.float32).to(device)
 
-    distributed_targets = torch.zeros(len(anchors), 4, dtype=torch.float32)
+    distributed_targets = torch.zeros(len(anchors), 4, dtype=torch.float32).to(device)
 
     ious = box_iou(anchors, target_boxes)
     max_iou_anchor_index = torch.argmax(ious, dim=0)  # return 2 anchor indexes corresponding to 2 targets
@@ -51,7 +54,7 @@ def assign_targets_to_anchors_or_proposals(
 
     labels[pos_index] = 1
     pos_mask = labels == 1
-    non_pos_mask = torch.logical_not(pos_mask)
+    non_pos_mask = torch.logical_not(pos_mask).to(device)
     labels[non_pos_mask * neg_mask] = -1
 
     pos_ratio = pos_sample_ratio
@@ -81,6 +84,7 @@ def assign_targets_to_anchors_or_proposals(
 def encode_boxes_to_deltas(distributed_targets, anc_or_pro):
     # type: (Tensor, Tensor) -> Tensor
     epsilon = 1e-8
+    anc_or_pro = anc_or_pro.to(device)
     anchors_x1 = anc_or_pro[:, 0].unsqueeze(1)
     anchors_y1 = anc_or_pro[:, 1].unsqueeze(1)
     anchors_x2 = anc_or_pro[:, 2].unsqueeze(1)
@@ -126,6 +130,8 @@ def box_area(boxes):
 
 
 def box_iou(boxes1, boxes2):
+    boxes1 = boxes1.to(device)
+    boxes2 = boxes2.to(device)
     """
     Return intersection-over-union (Jaccard index) of boxes.
 
@@ -160,13 +166,15 @@ def box_iou(boxes1, boxes2):
 
 
 def decode_deltas_to_boxes(deltas, anchors):
+    deltas = deltas.to(device)
+    anchors = anchors.to(device)[None, ...]
     # type: (Tensor, List[Tensor]) -> Tensor
     if not isinstance(anchors, (list, tuple)):
         anchors = [anchors]
     assert isinstance(anchors, (list, tuple))
     assert isinstance(deltas, torch.Tensor)
     n_boxes_per_image = [b.size(0) for b in anchors]
-    concat_boxes = torch.cat(anchors, dim=0)
+    concat_boxes = torch.cat(anchors, dim=0).squeeze(0)
 
     box_sum = 0
     for val in n_boxes_per_image:
@@ -196,26 +204,26 @@ def decode_single(deltas, anchors, weights=[1, 1, 1, 1]):
     anchors = anchors.to(deltas.dtype)
     bbox_xform_clip = math.log(1000. / 16)
     # xmin, ymin, xmax, ymax
-    widths = anchors[:, 2] - anchors[:, 0]
-    heights = anchors[:, 3] - anchors[:, 1]
-    ctr_x = anchors[:, 0] + 0.5 * widths
-    ctr_y = anchors[:, 1] + 0.5 * heights
+    widths = anchors[..., 2] - anchors[..., 0]
+    heights = anchors[..., 3] - anchors[..., 1]
+    ctr_x = anchors[..., 0] + 0.5 * widths
+    ctr_y = anchors[..., 1] + 0.5 * heights
 
-    wx, wy, ww, wh = weights  # RPN中为[1,1,1,1], fastrcnn中为[10,10,5,5]
-    dx = deltas[..., 0::4] / wx
-    dy = deltas[..., 1::4] / wy
-    dw = deltas[..., 2::4] / ww
-    dh = deltas[..., 3::4] / wh
+    wx, wy, ww, wh = weights
+    dx = deltas[..., 0] / wx
+    dy = deltas[..., 1] / wy
+    dw = deltas[..., 2] / ww
+    dh = deltas[..., 3] / wh
 
     # limit max value, prevent sending too large values into torch.exp()
     # bbox_xform_clip=math.log(1000. / 16)   4.135
     dw = torch.clamp(dw, max=bbox_xform_clip)
     dh = torch.clamp(dh, max=bbox_xform_clip)
 
-    pred_ctr_x = dx * widths[:, None] + ctr_x[:, None]
-    pred_ctr_y = dy * heights[:, None] + ctr_y[:, None]
-    pred_w = torch.exp(dw) * widths[:, None]
-    pred_h = torch.exp(dh) * heights[:, None]
+    pred_ctr_x = dx * widths + ctr_x
+    pred_ctr_y = dy * heights + ctr_y
+    pred_w = torch.exp(dw) * widths
+    pred_h = torch.exp(dh) * heights
 
     xmins = pred_ctr_x - torch.tensor(0.5, dtype=pred_ctr_x.dtype, device=pred_w.device) * pred_w
     ymins = pred_ctr_y - torch.tensor(0.5, dtype=pred_ctr_y.dtype, device=pred_h.device) * pred_h
@@ -239,8 +247,8 @@ def clip_boxes_to_image(boxes, size=config.image_shape):
         clipped_boxes (Tensor[N, 4])
     """
     dim = boxes.dim()
-    boxes_x = boxes[..., 0::2]  # x1, x2
-    boxes_y = boxes[..., 1::2]  # y1, y2
+    boxes_x = boxes[..., 0:: 2]  # x1, x2
+    boxes_y = boxes[..., 1:: 2]  # y1, y2
     height, width = size
 
     boxes_x = boxes_x.clamp(min=0, max=width)

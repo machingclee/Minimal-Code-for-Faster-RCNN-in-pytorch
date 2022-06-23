@@ -38,7 +38,7 @@ class RPN(nn.Module):
     def __init__(self):
         super(RPN, self).__init__()
         self.anchors = AnchorGenerator().get_anchors()
-        self.rpn_head = RPNHead()
+        self.rpn_head = RPNHead().to(device)
 
     def forward(self, features):
         batch_size = features.shape[0]

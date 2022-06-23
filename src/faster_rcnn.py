@@ -11,6 +11,7 @@ from typing import cast
 from torch import Tensor
 from torchvision.ops import nms
 from src.utils import random_choice
+from src.device import device
 from torchvision.ops import RoIAlign
 
 l1_loss = nn.L1Loss()
@@ -39,26 +40,29 @@ class FasterRCNN(nn.Module):
     def __init__(self):
         super(FasterRCNN, self).__init__()
         self.feature_extractor = FeatureExtractor()
-        self.rpn = RPN()
+        self.rpn = RPN().to(device)
         self.roi_align = RoIAlign(output_size=7, sampling_ratio=2, spatial_scale=1.0)
-        self.mlp_detector = Detector()
+        self.mlp_detector = Detector().to(device)
 
     def filter_small_rois(self, logits, rois):
+        rois = rois.squeeze(1).unsqueeze(0)
         hs = rois[..., 2] - rois[..., 0]
         ws = rois[..., 3] - rois[..., 1]
+        hs = hs
+        ws = ws
         keep_mask = (hs >= config.min_size) * (ws >= config.min_size)
         logits = logits[keep_mask]
         rois = rois[keep_mask]
         return logits, rois
 
-    def filter_by_nms(self, logits, rois):
+    def filter_by_nms(self, logits, rois, n_pre_nms, n_post_nms):
         scores = cast(Tensor, logits).softmax(dim=1)[:, 1]
         order = scores.ravel().argsort(descending=True)
-        order = order[:config.n_train_pre_nms]
+        order = order[:n_pre_nms]
         scores = scores[order]
         rois = rois[order, :]
         keep = nms(rois, scores, config.nms_iou_thresh)
-        keep = keep[:config.n_train_post_nms]
+        keep = keep[:n_post_nms]
         rois = rois[keep]
         return rois
 
@@ -72,9 +76,9 @@ class FasterRCNN(nn.Module):
             neg_iou_thresh=config.target_neg_iou_thres,
             target_cls_indexes=None
         )
-
+        labels = labels.to(device)
         pos_mask = labels == 1
-        keep_mask = torch.abs(labels) == 1
+        keep_mask = (torch.abs(labels) == 1)
 
         target_deltas = encode_boxes_to_deltas(distributed_targets, self.rpn.anchors)
         reg_loss = l1_loss(pred_deltas[:, pos_mask], target_deltas[pos_mask][None, ...])
@@ -93,7 +97,7 @@ class FasterRCNN(nn.Module):
 
         reg_loss = l1_loss(
             target_deltas,
-            torch.stack([pred_deltas[(int(pos_idx_), int(class_))] for pos_idx_, class_ in zip(pos_idx, classes)])
+            torch.stack([pred_deltas[(int(class_), int(pos_idx_))] for pos_idx_, class_ in zip(pos_idx, classes)])
         )
         cls_loss = cce_loss(cls_logits[pos_idx], classes.long())
         return cls_loss + 10 * reg_loss
@@ -104,6 +108,12 @@ class FasterRCNN(nn.Module):
         target_boxes=None,
         target_cls_indexes=None
     ):
+        x = x.to(device)
+
+        if target_cls_indexes is not None:
+            target_boxes = target_boxes.to(device)
+            target_cls_indexes = target_cls_indexes.to(device)
+
         if self.training:
             assert target_boxes is not None
         features = self.feature_extractor(x)
@@ -116,7 +126,12 @@ class FasterRCNN(nn.Module):
         pred_fg_bg_logits, rois = self.filter_small_rois(pred_fg_bg_logits, rois)
 
         if self.training:
-            rois = self.filter_by_nms(pred_fg_bg_logits, rois)
+            rois = self.filter_by_nms(
+                pred_fg_bg_logits,
+                rois,
+                config.n_train_pre_nms,
+                config.n_train_post_nms
+            )
             # distribute to anchors
 
             labels, distributed_targets_to_roi, distributed_cls_indexes = \
@@ -135,13 +150,20 @@ class FasterRCNN(nn.Module):
                 [rois[torch.abs(labels) == 1].mul_(1 / 16.0)]
             )
         else:
+            rois = self.filter_by_nms(
+                pred_fg_bg_logits,
+                rois,
+                config.n_test_pre_nms,
+                config.n_test_post_nms
+            )
+            rois = rois[:config.roi_n_sample]
             pooling = self.roi_align(
                 features,
                 [rois.mul_(1 / 16.0)]
             )
 
         cls_logits, roi_pred_deltas = self.mlp_detector(pooling)
-        roi_pred_deltas = roi_pred_deltas.view(config.roi_n_sample, -1, 4)
+        roi_pred_deltas = roi_pred_deltas.view(-1, config.roi_n_sample, 4)
 
         if self.training:
             roi_loss = self.get_roi_loss(

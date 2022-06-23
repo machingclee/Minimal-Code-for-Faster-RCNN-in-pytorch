@@ -33,3 +33,4 @@ n_classes = 2  # include background
 
 dataset_dir = "dataset"
 training_img_dir = "dataset/training_images"
+test_img_dir = "dataset/testing_images"

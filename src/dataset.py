@@ -44,7 +44,7 @@ def pad_img(img):
     h = img.height
     w = img.width
     img = np.array(img)
-    img = np.pad(img, pad_width=((0, config.input_height - h), (0, config.input_width - w), (0, 0)), mode="reflect")
+    img = np.pad(img, pad_width=((0, config.input_height - h), (0, config.input_width - w), (0, 0)), mode="constant")
     img = Image.fromarray(img)
     assert img.height == config.input_height
     assert img.width == config.input_width
@@ -52,6 +52,7 @@ def pad_img(img):
 
 
 def resize_and_padding(img, return_window=False):
+
     img, (ori_w, ori_h) = resize_img(img)
     w = img.width
     h = img.height
