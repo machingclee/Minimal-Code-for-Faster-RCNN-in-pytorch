@@ -1,69 +1,95 @@
 import torch
+import numpy as np
+import math
+import torchvision
 from src.anchor_generator import AnchorGenerator
 from src import config
 from torch import Tensor
 from src.device import device
+from typing import List, Tuple
+from src.utils import random_choice
 
 
-def encode_target_to_anchors(target_box):
-    anchors = AnchorGenerator().get_anchors()
-    fg_bg_ignores = torch.zeros(len(anchors),)
-    deltas = torch.zeros(len(anchors), 4)
-    ious = box_iou(anchors, target_box[None, ...])
-    ious = ious[..., 0]
+def assign_targets_to_anchors_or_proposals(
+    target_boxes,
+    anchors,
+    n_sample,
+    pos_sample_ratio,
+    pos_iou_thresh,
+    neg_iou_thresh,
+    target_cls_indexes=None
+):
+    """
+    return:
+        labels: [len(anchors), ], -1 = neg, 0 = ignore, 1 = pos
+        target: [len(anchors), 4]
+    """
+    labels = torch.zeros(len(anchors), dtype=torch.int32)
+    distributed_cls_indexes = None
 
-    max_iou = torch.max(ious)
-    max_iou_indexes = ious == max_iou
-    fg_bg_ignores[max_iou_indexes] = 1
+    if target_cls_indexes is not None:
+        distributed_cls_indexes = torch.zeros(len(anchors), dtype=torch.float32)
 
-    fg_anchor = ious >= config.target_pos_iou_thres
-    fg_bg_ignores[fg_anchor] = 1
+    distributed_targets = torch.zeros(len(anchors), 4, dtype=torch.float32)
 
-    bg_anchor = ious <= config.target_neg_iou_thres
-    fg_bg_ignores[bg_anchor] = -1
+    ious = box_iou(anchors, target_boxes)
+    max_iou_anchor_index = torch.argmax(ious, dim=0)  # return 2 anchor indexes corresponding to 2 targets
+    labels[max_iou_anchor_index] = 1
+    distributed_targets[max_iou_anchor_index] = target_boxes
+
+    if target_cls_indexes is not None:
+        distributed_cls_indexes[max_iou_anchor_index] = target_cls_indexes
+
+    max_iou_target_idx_per_anchor = torch.argmax(ious, dim=1)
+    max_ious = ious[torch.arange(len(anchors)), max_iou_target_idx_per_anchor]
+    pos_index = torch.where(max_ious > pos_iou_thresh)[0]
+    neg_mask = max_ious < neg_iou_thresh
+    distributed_targets[pos_index] = target_boxes[max_iou_target_idx_per_anchor[pos_index]]
+
+    if target_cls_indexes is not None:
+        distributed_cls_indexes[pos_index] = target_cls_indexes[max_iou_target_idx_per_anchor[pos_index]]
+
+    labels[pos_index] = 1
+    pos_mask = labels == 1
+    non_pos_mask = torch.logical_not(pos_mask)
+    labels[non_pos_mask * neg_mask] = -1
+
+    pos_ratio = pos_sample_ratio
+    n_desired_pos_sample = n_sample * pos_ratio
+
+    actual_pos_anchor_index = torch.where(labels == 1)[0]
+    n_actual_pos_anchor = len(actual_pos_anchor_index)
+
+    if n_actual_pos_anchor > n_desired_pos_sample:
+        surplus = n_actual_pos_anchor - n_desired_pos_sample
+        discarded_index = random_choice(actual_pos_anchor_index, surplus)
+        labels[discarded_index] = 0
+
+    n_desired_neg_sample = n_sample - torch.sum(labels == 1)
+
+    actual_neg_anchor_index = torch.where(labels == -1)[0]
+    n_actual_neg_anchor = len(actual_neg_anchor_index)
+
+    if n_actual_neg_anchor > n_desired_neg_sample:
+        surplus = n_actual_neg_anchor - n_desired_neg_sample
+        discarded_index = random_choice(actual_neg_anchor_index, surplus)
+        labels[discarded_index] = 0
+
+    return labels, distributed_targets, distributed_cls_indexes
 
 
-def assign_targets_to_anchors(targets, anchors):
-
-    labels = []
-    matched_gt_boxes = []
-
-    gt_boxes = targets
-    if gt_boxes.numel() == 0:
-        matched_gt_boxes_per_image = torch.zeros_like(anchors, dtype=torch.float32, device=device)
-        labels_per_image = torch.zeros_like((anchors[0],), dtype=torch.float32, device=device)
-    else:
-        ious = box_iou(gt_boxes, anchors)
-
-        matched_idxs = ious
-
-        matched_gt_boxes_per_image = gt_boxes[matched_idxs.clamp(min=0)]
-
-        labels_per_image = matched_idxs >= 0
-        labels_per_image = labels_per_image.to(dtype=torch.float32)
-
-        bg_indices = matched_idxs == proposal_matcher.BELOW_LOW_THRESHOLD  # -1
-        labels_per_image[bg_indices] = 0.0
-
-        inds_to_discard = matched_idxs == proposal_matcher.BETWEEN_THRESHOLDS  # -2
-        labels_per_image[inds_to_discard] = -1.0
-
-        labels.append(labels_per_image)
-        matched_gt_boxes.append(matched_gt_boxes_per_image)
-    return labels, matched_gt_boxes
-
-
-def encode_boxes(target_boxes, anchors):
+def encode_boxes_to_deltas(distributed_targets, anc_or_pro):
     # type: (Tensor, Tensor) -> Tensor
-    anchors_x1 = anchors[:, 0].unsqueeze(1)
-    anchors_y1 = anchors[:, 1].unsqueeze(1)
-    anchors_x2 = anchors[:, 2].unsqueeze(1)
-    anchors_y2 = anchors[:, 3].unsqueeze(1)
+    epsilon = 1e-8
+    anchors_x1 = anc_or_pro[:, 0].unsqueeze(1)
+    anchors_y1 = anc_or_pro[:, 1].unsqueeze(1)
+    anchors_x2 = anc_or_pro[:, 2].unsqueeze(1)
+    anchors_y2 = anc_or_pro[:, 3].unsqueeze(1)
 
-    target_boxes_x1 = target_boxes[:, 0].unsqueeze(1)
-    target_boxes_y1 = target_boxes[:, 1].unsqueeze(1)
-    target_boxes_x2 = target_boxes[:, 2].unsqueeze(1)
-    target_boxes_y2 = target_boxes[:, 3].unsqueeze(1)
+    target_boxes_x1 = distributed_targets[:, 0].unsqueeze(1)
+    target_boxes_y1 = distributed_targets[:, 1].unsqueeze(1)
+    target_boxes_x2 = distributed_targets[:, 2].unsqueeze(1)
+    target_boxes_y2 = distributed_targets[:, 3].unsqueeze(1)
 
     an_widths = anchors_x2 - anchors_x1
     an_heights = anchors_y2 - anchors_y1
@@ -75,13 +101,13 @@ def encode_boxes(target_boxes, anchors):
     gt_ctr_x = target_boxes_x1 + 0.5 * gt_widths
     gt_ctr_y = target_boxes_y1 + 0.5 * gt_heights
 
-    targets_dx = (gt_ctr_x - an_ctr_x) / an_widths
-    targets_dy = (gt_ctr_y - an_ctr_y) / an_heights
-    targets_dw = torch.log(gt_widths / an_widths)
-    targets_dh = torch.log(gt_heights / an_heights)
+    targets_dx = (gt_ctr_x - an_ctr_x) / (an_widths)
+    targets_dy = (gt_ctr_y - an_ctr_y) / (an_heights)
+    targets_dw = torch.log((gt_widths + epsilon) / (an_widths))
+    targets_dh = torch.log((gt_heights + epsilon) / (an_heights))
 
-    targets = torch.cat((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
-    return targets
+    deltas = torch.cat((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
+    return deltas
 
 
 def box_area(boxes):
@@ -113,6 +139,11 @@ def box_iou(boxes1, boxes2):
         iou (Tensor[N, M]): the NxM matrix containing the pairwise
             IoU values for every element in boxes1 and boxes2
     """
+    if len(boxes1.shape) == 1:
+        boxes1 = boxes1[None, ...]
+    if len(boxes2.shape) == 1:
+        boxes2 = boxes2[None, ...]
+
     area1 = box_area(boxes1)
     area2 = box_area(boxes2)
 
@@ -123,6 +154,97 @@ def box_iou(boxes1, boxes2):
 
     wh = (lower_right - upper_left).clamp(min=0)  # [N,M,2]
     inter = wh[:, :, 0] * wh[:, :, 1]  # [N,M]
-
-    iou = inter / (area1[:, None] + area2 - inter)
+    epsilon = 1e-8
+    iou = inter / (area1[:, None] + area2 - inter + epsilon)
     return iou
+
+
+def decode_deltas_to_boxes(deltas, anchors):
+    # type: (Tensor, List[Tensor]) -> Tensor
+    if not isinstance(anchors, (list, tuple)):
+        anchors = [anchors]
+    assert isinstance(anchors, (list, tuple))
+    assert isinstance(deltas, torch.Tensor)
+    n_boxes_per_image = [b.size(0) for b in anchors]
+    concat_boxes = torch.cat(anchors, dim=0)
+
+    box_sum = 0
+    for val in n_boxes_per_image:
+        box_sum += val
+    # single mean single feature scale,
+    # there are many scales in fpn and each scales contain many boxes
+    pred_boxes = decode_single(
+        deltas, concat_boxes
+    )
+
+    if box_sum > 0:
+        pred_boxes = pred_boxes.reshape(-1, box_sum, 4)
+
+    return pred_boxes
+
+
+def decode_single(deltas, anchors, weights=[1, 1, 1, 1]):
+    """
+    weights: in RPN we use [1,1,1,1], in fastrcnn we use [10,10,5,5]
+    From a set of original boxes and encoded relative box offsets,
+    get the decoded boxes.
+
+    Arguments:
+        rel_codes (Tensor): encoded boxes (bbox regression parameters)
+        boxes (Tensor): reference boxes (anchors/proposals)
+    """
+    anchors = anchors.to(deltas.dtype)
+    bbox_xform_clip = math.log(1000. / 16)
+    # xmin, ymin, xmax, ymax
+    widths = anchors[:, 2] - anchors[:, 0]
+    heights = anchors[:, 3] - anchors[:, 1]
+    ctr_x = anchors[:, 0] + 0.5 * widths
+    ctr_y = anchors[:, 1] + 0.5 * heights
+
+    wx, wy, ww, wh = weights  # RPN中为[1,1,1,1], fastrcnn中为[10,10,5,5]
+    dx = deltas[..., 0::4] / wx
+    dy = deltas[..., 1::4] / wy
+    dw = deltas[..., 2::4] / ww
+    dh = deltas[..., 3::4] / wh
+
+    # limit max value, prevent sending too large values into torch.exp()
+    # bbox_xform_clip=math.log(1000. / 16)   4.135
+    dw = torch.clamp(dw, max=bbox_xform_clip)
+    dh = torch.clamp(dh, max=bbox_xform_clip)
+
+    pred_ctr_x = dx * widths[:, None] + ctr_x[:, None]
+    pred_ctr_y = dy * heights[:, None] + ctr_y[:, None]
+    pred_w = torch.exp(dw) * widths[:, None]
+    pred_h = torch.exp(dh) * heights[:, None]
+
+    xmins = pred_ctr_x - torch.tensor(0.5, dtype=pred_ctr_x.dtype, device=pred_w.device) * pred_w
+    ymins = pred_ctr_y - torch.tensor(0.5, dtype=pred_ctr_y.dtype, device=pred_h.device) * pred_h
+    xmaxs = pred_ctr_x + torch.tensor(0.5, dtype=pred_ctr_x.dtype, device=pred_w.device) * pred_w
+    ymaxs = pred_ctr_y + torch.tensor(0.5, dtype=pred_ctr_y.dtype, device=pred_h.device) * pred_h
+
+    pred_boxes = torch.stack((xmins, ymins, xmaxs, ymaxs), dim=2).flatten(1)
+    # [22500, batch_size, 4]
+    return pred_boxes
+
+
+def clip_boxes_to_image(boxes, size=config.image_shape):
+    # type: (Tensor, Tuple[int, int]) -> Tensor
+    """
+    Clip boxes so that they lie inside an image of size `size`.
+    Arguments:
+        boxes (Tensor[N, 4]): boxes in (x1, y1, x2, y2) format
+        size (Tuple[height, width]): size of the image
+
+    Returns:
+        clipped_boxes (Tensor[N, 4])
+    """
+    dim = boxes.dim()
+    boxes_x = boxes[..., 0::2]  # x1, x2
+    boxes_y = boxes[..., 1::2]  # y1, y2
+    height, width = size
+
+    boxes_x = boxes_x.clamp(min=0, max=width)
+    boxes_y = boxes_y.clamp(min=0, max=height)
+
+    clipped_boxes = torch.stack((boxes_x, boxes_y), dim=dim)
+    return clipped_boxes.reshape(boxes.shape)

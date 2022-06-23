@@ -13,9 +13,14 @@ class FeatureExtractor(nn.Module):
     def __init__(self):
         super(FeatureExtractor, self).__init__()
         self.vgg = models.vgg16(pretrained=True)
+        self.freezed_weight()
         self.features = self.vgg.features
         self.out_channels = None
         self.feature_extraction = nn.Sequential(*self._get_layers())
+
+    def freezed_weight(self):
+        for param in self.vgg.parameters():
+            param.requires_grad = False
 
     def _get_layers(self):
         dummy_img = torch.randn((1, 3, config.input_height, config.input_width))

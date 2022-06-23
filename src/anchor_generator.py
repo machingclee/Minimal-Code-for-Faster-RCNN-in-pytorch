@@ -1,3 +1,4 @@
+from operator import index
 import numpy as np
 import torch
 from src import config
@@ -38,7 +39,7 @@ class AnchorGenerator():
             stride = config.input_width // grid_num
             center_ys = torch.arange(1, (grid_num + 1)) * stride - stride / 2
             center_xs = torch.arange(1, (grid_num + 1)) * stride - stride / 2
-            center_ys, center_xs = torch.meshgrid(center_ys, center_xs)
+            center_ys, center_xs = torch.meshgrid(center_ys, center_xs, indexing="ij")
             center_ys = center_ys[..., None]
             center_xs = center_xs[..., None]
             centers = torch.cat(
@@ -50,14 +51,15 @@ class AnchorGenerator():
             # (64*64, 1, 4) + (1, 9, 4)
             anchors_curr_grid_scale = centers[:, None, :] + base_anchors_coor_shift[None, ...]
             anchors_curr_grid_scale = anchors_curr_grid_scale.view((-1, 4))
-            mask1 = anchors_curr_grid_scale[..., 0] >= -5
-            mask2 = anchors_curr_grid_scale[..., 1] >= -5
-            mask3 = anchors_curr_grid_scale[..., 2] <= config.input_width + 5
-            mask4 = anchors_curr_grid_scale[..., 3] <= config.input_height + 5
-            # screen cross boundary anchors:
-            # mask[i] = 1 if and only if maskj[i] = 1 for j = 1,2,3,4
-            mask = mask1 * mask2 * mask3 * mask4
-            anchors_curr_grid_scale = anchors_curr_grid_scale[mask]
+            # mask1 = anchors_curr_grid_scale[..., 0] >= 0
+            # mask2 = anchors_curr_grid_scale[..., 1] >= 0
+            # mask3 = anchors_curr_grid_scale[..., 2] <= config.input_width
+            # mask4 = anchors_curr_grid_scale[..., 3] <= config.input_height
+            # # screen cross boundary anchors:
+            # # mask[i] = 1 if and only if maskj[i] = 1 for j = 1,2,3,4
+            # mask = mask1 * mask2 * mask3 * mask4
+            # internal_index = torch.where(mask == 1)[0]
+            # anchors_curr_grid_scale = anchors_curr_grid_scale[internal_index]
 
         AnchorGenerator.anchors = anchors_curr_grid_scale
 
