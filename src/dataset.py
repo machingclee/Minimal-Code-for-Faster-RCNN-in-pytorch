@@ -3,18 +3,19 @@ import csv
 import os
 import numpy as np
 import torch
-from PIL import Image
+import random
+from PIL import Image, ImageDraw
 from torch.utils.data import Dataset
 from src import config
 from pydash import get, set_
 from typing import List
 from torchvision import transforms
 from torchvision.transforms import ToPILImage
-
+from copy import deepcopy
 
 torch_img_transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+    transforms.ToTensor()
+    # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 data_transform = transforms.Compose([transforms.ToTensor()])
@@ -25,18 +26,6 @@ def resize_img(img):
     img:  Pillow image
     """
     h, w = img.height, img.width
-    if h >= w:
-        ratio = config.input_height / h
-        new_h, new_w = int(h * ratio), int(w * ratio)
-    else:
-        ratio = config.input_height / h
-        new_h, new_w = int(h * ratio), int(w * ratio)
-
-        if new_w > config.input_width:
-            ratio = config.input_width / new_w
-            new_h, new_w = int(new_h * ratio), int(new_w * ratio)
-
-    img = img.resize((new_w, new_h), Image.BILINEAR)
     return img, (w, h)
 
 
@@ -52,11 +41,10 @@ def pad_img(img):
 
 
 def resize_and_padding(img, return_window=False):
-
     img, (ori_w, ori_h) = resize_img(img)
     w = img.width
     h = img.height
-    padding_window = (w, h)
+    padding_window = (0, 0, w, h)
     img = pad_img(img)
 
     if not return_window:
@@ -66,39 +54,55 @@ def resize_and_padding(img, return_window=False):
 
 
 class AnnotationDataset(Dataset):
-    def __init__(self):
+    def __init__(self, mode="train"):
+        assert mode in ["train", "test"]
+        self.mode = mode
         super(AnnotationDataset, self).__init__()
-        self.annotation = {}
-        with open("dataset/train_solution_bounding_boxes.csv") as f:
-            reader = csv.reader(f)
-            next(reader)  # skip first line
-            for line in reader:
-                img_basename, x1, y1, x2, y2 = line
-                box = [x1, y1, x2, y2]
+        self.annotations = {}
+        self.cls_names = set()
+        self.classnames = ["BG", "RBC", "Platelets", "WBC"]
+        with open("dataset_blood/test.csv") as f:
+            next(f)  # skip first line
+            for line in f:
+                line = line.split(",")
+                img_basename, cls_name, x1, y1, x2, y2 = line
+                xmin = float(x1)
+                xmax = float(y1)
+                ymin = float(x2)
+                ymax = float(y2)
+                cls_index = self.classnames.index(cls_name)
 
-                if self.annotation.get(img_basename, None) is None:
-                    self.annotation.update({img_basename: [box]})
+                box = [xmin, ymin, xmax, ymax, cls_index]
+
+                if self.annotations.get(img_basename, None) is None:
+                    self.annotations.update({img_basename: [box]})
                 else:
-                    self.annotation[img_basename].append(box)
+                    self.annotations[img_basename].append(box)
 
-            self.data: List[str, List[List[float]]] = [[k, v] for k, v in self.annotation.items()]
+            # [imagesbasename, [[bbox, cls_index]]]
+            self.data: List[str, List[List[float]]] = [[k, np.array(v)] for k, v in self.annotations.items()]
+            random.shuffle(self.data)
 
     def __getitem__(self, index):
         data = self.data[index]
         img_basename, boxes = data
 
-        boxes_ = []
-        for box in boxes:
-            box = [float(v) for v in box]
-            boxes_.append(box)
-
         img_path = os.path.join(config.training_img_dir, img_basename)
         img = Image.open(img_path)
+        img_pil_original = deepcopy(img)
         img = resize_and_padding(img)
-
+        # draw = ImageDraw.Draw(img)
+        # for box in boxes_:
+        #     draw.rectangle(((box[0], box[1]), (box[2], box[3])), outline='Green')
         img = torch_img_transform(img)
-        boxes = torch.as_tensor(boxes_)
-        return img, boxes
+
+        boxes_ = torch.as_tensor(boxes[..., 0:4]).float()
+        targets = torch.as_tensor(boxes[..., 4]).float()
+
+        if self.mode == "train":
+            return img, boxes_, targets
+        else:
+            return img_pil_original, boxes_, targets
 
     def __len__(self):
         return len(self.data)

@@ -35,10 +35,11 @@ class AnchorGenerator():
         )
         base_anchors_coor_shift = base_anchors_coor_shift.view((-1, 4))
 
-        for grid_num in self.grid_nums:
-            stride = config.input_width // grid_num
-            center_ys = torch.arange(1, (grid_num + 1)) * stride - stride / 2
-            center_xs = torch.arange(1, (grid_num + 1)) * stride - stride / 2
+        for (grid_num_y, grid_num_x) in self.grid_nums:
+            stride_y = config.input_height // grid_num_y
+            stride_x = config.input_width // grid_num_x
+            center_ys = torch.arange(1, (grid_num_y + 1)) * stride_y - stride_y / 2
+            center_xs = torch.arange(1, (grid_num_x + 1)) * stride_x - stride_x / 2
             center_ys, center_xs = torch.meshgrid(center_ys, center_xs, indexing="ij")
             center_ys = center_ys[..., None]
             center_xs = center_xs[..., None]

@@ -22,13 +22,13 @@ class RPNHead(nn.Module):
         self.weight_init()
 
     def weight_init(self):
-        for module in self.modules():
-            if isinstance(module, nn.Conv2d):
-                nn.init.xavier_normal_(module.weight)
-                module.bias.data.zero_()
+        for layer in self.modules():
+            if isinstance(layer, nn.Conv2d):
+                torch.nn.init.normal_(layer.weight, std=0.01)
+                torch.nn.init.constant_(layer.bias, 0)
 
     def forward(self, feature):
-        feature = self.conv1(feature)
+        feature = F.relu(self.conv1(feature))
         logits = self.conv_logits(feature)
         deltas = self.conv_deltas(feature)
         return logits, deltas
@@ -38,13 +38,12 @@ class RPN(nn.Module):
     def __init__(self):
         super(RPN, self).__init__()
         self.anchors = AnchorGenerator().get_anchors()
-        self.rpn_head = RPNHead().to(device)
+        self.rpn_head = RPNHead()
 
     def forward(self, features):
         batch_size = features.shape[0]
         logits, deltas = self.rpn_head(features)
 
-        logits = cast(Tensor, logits).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 2)
-        deltas = cast(Tensor, deltas).permute(0, 2, 3, 1).contiguous().view(batch_size, -1, 4)
-        pred_boxes = decode_deltas_to_boxes(deltas, self.anchors)
-        return logits, deltas, pred_boxes
+        logits = logits.permute(0, 2, 3, 1).reshape(batch_size, -1, 2)
+        deltas = deltas.permute(0, 2, 3, 1).reshape(batch_size, -1, 4)
+        return logits, deltas

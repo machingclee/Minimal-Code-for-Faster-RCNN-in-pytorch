@@ -6,7 +6,7 @@ from src.anchor_generator import AnchorGenerator
 from src import config
 from torch import Tensor
 from src.device import device
-from typing import List, Tuple
+from typing import List, Tuple, cast
 from src.utils import random_choice
 
 
@@ -26,13 +26,10 @@ def assign_targets_to_anchors_or_proposals(
         labels: [len(anchors), ], -1 = neg, 0 = ignore, 1 = pos
         target: [len(anchors), 4]
     """
-    anchors = anchors.to(device)
     labels = torch.zeros(len(anchors), dtype=torch.int32).to(device)
     distributed_cls_indexes = None
 
-    if target_cls_indexes is not None:
-        distributed_cls_indexes = torch.zeros(len(anchors), dtype=torch.float32).to(device)
-
+    distributed_cls_indexes = torch.zeros(len(anchors), dtype=torch.float32).to(device)
     distributed_targets = torch.zeros(len(anchors), 4, dtype=torch.float32).to(device)
 
     ious = box_iou(anchors, target_boxes)
@@ -77,6 +74,9 @@ def assign_targets_to_anchors_or_proposals(
         surplus = n_actual_neg_anchor - n_desired_neg_sample
         discarded_index = random_choice(actual_neg_anchor_index, surplus)
         labels[discarded_index] = 0
+
+    if len(torch.where(torch.abs(labels) == 1)[0]) == 1:
+        print("pass")
 
     return labels, distributed_targets, distributed_cls_indexes
 
@@ -167,7 +167,7 @@ def box_iou(boxes1, boxes2):
 
 def decode_deltas_to_boxes(deltas, anchors):
     deltas = deltas.to(device)
-    anchors = anchors.to(device)[None, ...]
+    anchors = anchors.to(device)
     # type: (Tensor, List[Tensor]) -> Tensor
     if not isinstance(anchors, (list, tuple)):
         anchors = [anchors]
@@ -206,6 +206,7 @@ def decode_single(deltas, anchors, weights=[1, 1, 1, 1]):
     # xmin, ymin, xmax, ymax
     widths = anchors[..., 2] - anchors[..., 0]
     heights = anchors[..., 3] - anchors[..., 1]
+
     ctr_x = anchors[..., 0] + 0.5 * widths
     ctr_y = anchors[..., 1] + 0.5 * heights
 
@@ -230,7 +231,7 @@ def decode_single(deltas, anchors, weights=[1, 1, 1, 1]):
     xmaxs = pred_ctr_x + torch.tensor(0.5, dtype=pred_ctr_x.dtype, device=pred_w.device) * pred_w
     ymaxs = pred_ctr_y + torch.tensor(0.5, dtype=pred_ctr_y.dtype, device=pred_h.device) * pred_h
 
-    pred_boxes = torch.stack((xmins, ymins, xmaxs, ymaxs), dim=2).flatten(1)
+    pred_boxes = torch.stack((xmins, ymins, xmaxs, ymaxs), dim=1).flatten(1)
     # [22500, batch_size, 4]
     return pred_boxes
 

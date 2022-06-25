@@ -23,6 +23,7 @@ def main():
     # faster_rcnn = FasterRCNN()
     # a = faster_rcnn(dummy_img, target_boxes, target_cls_indexes)
     # print(a.shape)
+    pass
 
 
 if __name__ == "__main__":
