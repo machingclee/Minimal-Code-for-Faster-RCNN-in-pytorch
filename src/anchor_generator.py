@@ -21,10 +21,10 @@ class AnchorGenerator():
         scales = torch.as_tensor(config.anchor_scales)
 
         hs = scales[None, ...] * torch.sqrt(ratios)[..., None]
-        hs = hs.view((len(ratios) * len(scales),))
+        hs = hs.reshape((len(ratios) * len(scales),))
 
         ws = scales[None, ...] / torch.sqrt(ratios)[..., None]
-        ws = ws.view((len(ratios) * len(scales),))
+        ws = ws.reshape((len(ratios) * len(scales),))
 
         hs = hs[..., None]
         ws = ws[..., None]
@@ -33,7 +33,7 @@ class AnchorGenerator():
             [-ws / 2, -hs / 2, ws / 2, hs / 2],
             dim=-1
         )
-        base_anchors_coor_shift = base_anchors_coor_shift.view((-1, 4))
+        base_anchors_coor_shift = base_anchors_coor_shift.reshape((-1, 4))
 
         for (grid_num_y, grid_num_x) in self.grid_nums:
             stride_y = config.input_height // grid_num_y
@@ -47,11 +47,11 @@ class AnchorGenerator():
                 [center_xs, center_ys, center_xs, center_ys],
                 dim=-1
             )
-            centers = centers.view((-1, 4))
+            centers = centers.reshape((-1, 4))
 
             # (64*64, 1, 4) + (1, 9, 4)
             anchors_curr_grid_scale = centers[:, None, :] + base_anchors_coor_shift[None, ...]
-            anchors_curr_grid_scale = anchors_curr_grid_scale.view((-1, 4))
+            anchors_curr_grid_scale = anchors_curr_grid_scale.reshape((-1, 4))
             # mask1 = anchors_curr_grid_scale[..., 0] >= 0
             # mask2 = anchors_curr_grid_scale[..., 1] >= 0
             # mask3 = anchors_curr_grid_scale[..., 2] <= config.input_width

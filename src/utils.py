@@ -14,7 +14,7 @@ def random_choice(arr, length, return_keep=False):
         return arr[idxes]
 
 
-def smooth_l1_loss(input, target, beta: float = 1. / 9, size_average: bool = True):
+def smooth_l1_loss(input, target, beta: float = 1.0, size_average: bool = True):
     n = torch.abs(input - target)
     # cond = n < beta
     cond = torch.lt(n, beta)
@@ -29,15 +29,6 @@ def too_small(bbox):
     ws = bbox[3] - bbox[1]
     too_small = (hs < config.min_size) or (ws < config.min_size)
     return too_small
-
-
-def clip_box(bbox):
-    bbox = bbox.detach().cpu()
-    xmin = np.clip(bbox[0], 2, config.input_width)
-    ymin = np.clip(bbox[1], 2, config.input_height)
-    xmax = np.clip(bbox[2], 2, config.input_width)
-    ymax = np.clip(bbox[3], 2, config.input_height)
-    return bbox
 
 
 class ConsoleLog():

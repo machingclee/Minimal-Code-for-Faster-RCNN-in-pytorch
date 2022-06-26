@@ -14,8 +14,8 @@ from torchvision.transforms import ToPILImage
 from copy import deepcopy
 
 torch_img_transform = transforms.Compose([
-    transforms.ToTensor()
-    # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 data_transform = transforms.Compose([transforms.ToTensor()])
@@ -91,13 +91,16 @@ class AnnotationDataset(Dataset):
         img = Image.open(img_path)
         img_pil_original = deepcopy(img)
         img = resize_and_padding(img)
-        # draw = ImageDraw.Draw(img)
-        # for box in boxes_:
-        #     draw.rectangle(((box[0], box[1]), (box[2], box[3])), outline='Green')
+
         img = torch_img_transform(img)
 
         boxes_ = torch.as_tensor(boxes[..., 0:4]).float()
         targets = torch.as_tensor(boxes[..., 4]).float()
+
+        # draw = ImageDraw.Draw(img_pil_original)
+        # for box in boxes_:
+        #     draw.rectangle(((box[0], box[1]), (box[2], box[3])), outline='Green')
+        # img_pil_original.save("performance_check/test.jpg")
 
         if self.mode == "train":
             return img, boxes_, targets
