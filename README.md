@@ -7,7 +7,7 @@ This repository is a minimal working code for faster-RCNN.
 Along the way studying how to implement Faster RCNN I have read many blog post and tutorial video. Either 
 - the blog posts describe high level detail that do not help implement the model (worse still, most of the blog post share almost the same content), 
 or;
-- as in the source code from pytorch, the programming structure is deeply nested and difficult to digest.
+- as in the source code from pytorch, the programming structure is deeply nested and difficult to digest for learning.
 
 
 The video <a href="https://www.youtube.com/watch?v=4yOcsWg-7g8&t=1833s">How FasterRCNN works and step-by-step PyTorch implementation</a> helps me a alot in clarifying all the implementation detail. Unfortunately it still misses a complete training script from which we can reproduce similar results. That results in this repository.
