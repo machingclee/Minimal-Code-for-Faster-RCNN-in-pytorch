@@ -12,7 +12,7 @@ or;
 
 The video <a href="https://www.youtube.com/watch?v=4yOcsWg-7g8&t=1833s">How FasterRCNN works and step-by-step PyTorch implementation</a> helps me a alot in clarifying all the implementation detail. Unfortunately it still misses a complete training script from which we can reproduce similar results. That results in this repository.
 
-The entry point `main.py` just run the training script defined in `train.py`. Because it is for demonstrative purpose, we don't have test set. The model somehow overfits to its training data, but the results are encouraging enough to show that the implementation is ***complete*** and yet ***minimal***.
+The entry point `main.py` just run the training script defined in `src/train.py`. Because it is for demonstrative purpose, we don't have test set. The model somehow overfits to its training data, but the results are encouraging enough to show that the implementation is ***complete*** and yet ***minimal***.
 
 
 ## Result
