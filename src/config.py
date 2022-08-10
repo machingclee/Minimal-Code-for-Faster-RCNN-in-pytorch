@@ -1,7 +1,7 @@
-input_width = 640
-input_height = 480
+input_width = 2**11
+input_height = 2**11
 image_shape = (input_height, input_width)
-
+font_path = "./fonts/wt014.ttf"
 anchor_ratios = [0.5, 1, 2]
 anchor_scales = [16 * 2, 16 * 4, 16 * 8, 16 * 8]
 
@@ -29,13 +29,9 @@ n_train_post_nms = 2000
 n_eval_pre_nms = 6000
 n_eval_post_nms = roi_n_sample
 min_size = 16
+labels=["spalling", "crack"]
+n_classes = 3  # include background
 
-n_classes = 4  # include background
-
-
-dataset_dir = "dataset"
-training_img_dir = "dataset_blood/BCCD"
-test_img_dir = "dataset_blood/BCCD"
 
 pred_score_thresh = 0.05
 

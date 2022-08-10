@@ -88,12 +88,17 @@ class FasterRCNN(nn.Module):
         pos_mask = labels == 1
         keep_mask = torch.abs(labels) == 1
 
-        target_deltas = encode_boxes_to_deltas(distributed_targets, self.rpn.anchors)
+        
         objectness_label = torch.zeros_like(labels, device=device, dtype=torch.long)
         objectness_label[labels == 1] = 1.0
-
-        rpn_reg_loss = smooth_l1_loss(pred_deltas[pos_mask], target_deltas[pos_mask])
+        
         rpn_cls_loss = cce_loss(pred_fg_bg_logit.squeeze(0)[keep_mask], objectness_label[keep_mask])
+        
+        if torch.sum(pos_mask) > 0:
+            target_deltas = encode_boxes_to_deltas(distributed_targets, self.rpn.anchors)
+            rpn_reg_loss = smooth_l1_loss(pred_deltas[pos_mask], target_deltas[pos_mask])
+        else:
+            rpn_reg_loss = torch.sum(pred_deltas)*0
 
         return rpn_cls_loss, rpn_reg_loss
 
@@ -119,9 +124,15 @@ class FasterRCNN(nn.Module):
         )
         n_pos = len(pos_idx)
         n_neg = len(neg_idx)
-        roi_cls_loss = n_pos * cce_loss(cls_logits[pos_idx], distributed_cls_index[pos_idx].long())
-        roi_cls_loss += n_neg * cce_loss(cls_logits[neg_idx], distributed_cls_index[neg_idx].long())
-        roi_cls_loss = roi_cls_loss / (n_pos + n_neg)
+        
+        if n_pos > 0:
+            roi_cls_loss = n_pos * cce_loss(cls_logits[pos_idx], distributed_cls_index[pos_idx].long())
+            roi_cls_loss += n_neg * cce_loss(cls_logits[neg_idx], distributed_cls_index[neg_idx].long())
+            roi_cls_loss = roi_cls_loss / (n_pos + n_neg)
+        else:
+            roi_cls_loss = n_neg * cce_loss(cls_logits[neg_idx], distributed_cls_index[neg_idx].long())
+            roi_reg_loss = torch.sum(pred_deltas)*0
+            
         return roi_cls_loss, roi_reg_loss
 
     def filter_boxes_by_scores_and_size(self, cls_logits, pred_boxes):
@@ -247,5 +258,6 @@ class FasterRCNN(nn.Module):
             ).squeeze(0)
 
             scores, boxes, cls_idxes = self.filter_boxes_by_scores_and_size(cls_logits, pred_boxes)
+            cls_idxes = cls_idxes - 1
 
             return scores, boxes, cls_idxes, rois

@@ -29,6 +29,11 @@ def assign_targets_to_anchors_or_proposals(
     labels = torch.zeros((len(anchors),), dtype=torch.int32).to(device)
     distributed_cls_indexes = torch.zeros((len(anchors),), dtype=torch.float32).to(device)
     distributed_targets = torch.zeros((len(anchors), 4), dtype=torch.float32).to(device)
+    
+    if len(target_boxes) == 0:
+        chosen_idxes = random_choice(torch.arange(len(anchors)), n_sample)
+        labels[chosen_idxes] = -1
+        return labels, distributed_cls_indexes, distributed_targets
 
     ious = box_iou(anchors, target_boxes)
     max_iou_anchor_index = torch.argmax(ious, dim=0)  # return k anchor indexes corresponding to k targets
